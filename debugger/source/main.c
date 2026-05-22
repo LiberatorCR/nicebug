@@ -43,8 +43,11 @@ extern uint32_t g_debug_attached;
 extern void    *g_server_mutex;
 extern void    *g_proc_rw_mutex;
 
-#define SERVER_PORT       744
-#define SERVER_MAXCLIENTS 12
+#define SERVER_PORT          744
+#define SERVER_MAXCLIENTS    12
+#define SERVER_IDLE_TIMEOUT  5000    /* ms — kill client after N ms of silence */
+#define SERVER_CMD_INTERVAL  500000  /* us — min time between commands (prevent rapid-fire) */
+#define SERVER_CMD_MAX_TOTAL 0x1000000 /* 16 MiB max read per single command */
 extern struct server_client g_clients[SERVER_MAXCLIENTS];
 
 #define PACKET_MAGIC      0xFFAABBCCu
@@ -69,6 +72,12 @@ static int handle_client(struct server_client *svc) {
     struct timeval tv;
     fd_set sfd;
 
+    /* idle timeout tracking — kill client after SERVER_IDLE_TIMEOUT ms of silence */
+    uint64_t last_activity = sceKernelGetProcessTime();
+
+    /* rate limiting — enforce minimum gap between commands */
+    uint64_t last_cmd_time = 0;
+
     while (1) {
         tv.tv_sec  = 0;
         tv.tv_usec = 1000;
@@ -78,6 +87,20 @@ static int handle_client(struct server_client *svc) {
         select(fd + 1, &sfd, NULL, NULL, &tv);
 
         if (FD_ISSET(fd, &sfd)) {
+            /* rate-limit check: enforce cooldown between commands */
+            uint64_t now = sceKernelGetProcessTime();
+            if (last_cmd_time != 0) {
+                uint64_t elapsed = (uint64_t)(int64_t)((int64_t)now - (int64_t)last_cmd_time);
+                if (elapsed < SERVER_CMD_INTERVAL) {
+                    uint64_t sleep_us = SERVER_CMD_INTERVAL - elapsed;
+                    /* convert us to ms for sceKernelUsleep, min 1 ms */
+                    uint64_t sleep_ms = sleep_us / 1000;
+                    if (sleep_ms == 0) sleep_ms = 1;
+                    sceKernelUsleep(sleep_ms * 1000);
+                }
+            }
+            last_cmd_time = sceKernelGetProcessTime();
+
             struct cmd_packet packet;
             memset(&packet, 0, 12);
 
@@ -89,8 +112,8 @@ static int handle_client(struct server_client *svc) {
             void *data  = NULL;
 
             if (packet.datalen != 0) {
-                if (packet.datalen > 0x100000) {
-                    net_send_int32(fd, 0xF0000002u );
+                if (packet.datalen > SERVER_CMD_MAX_TOTAL) {
+                    net_send_int32(fd, 0xF0000002u);
                     continue;
                 }
                 data = malloc(packet.datalen);
@@ -115,6 +138,8 @@ static int handle_client(struct server_client *svc) {
             if (data) free(data);
             if (rc != 0) return rc;
 
+            last_activity = sceKernelGetProcessTime();
+
             if (svc->debugging && g_stopgo_resume_signal != 0xFFFFFFFFu) {
                 scePthreadMutexLock(&g_proc_rw_mutex);
                 scePthreadMutexLock(&g_server_mutex);
@@ -135,6 +160,13 @@ static int handle_client(struct server_client *svc) {
             if (dde_rc != 0) return 0;
         }
         if (errno == ECONNRESET) return 0;
+
+        /* idle timeout check: if too long without any packet, disconnect */
+        uint64_t now = sceKernelGetProcessTime();
+        uint64_t idle_ms = (uint64_t)(int64_t)((int64_t)now - (int64_t)last_activity);
+        if (idle_ms > SERVER_IDLE_TIMEOUT && !svc->debugging) {
+            return 0; /* disconnect idle client */
+        }
 
         sceKernelUsleep(svc->debugging ? 250 : 10000);
     }

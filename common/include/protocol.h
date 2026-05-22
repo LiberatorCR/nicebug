@@ -17,6 +17,26 @@
 #define CMD_PLATFORM_ID     0xBD000502u
 #define CMD_PROC_NOP        0xBDAACC06u
 
+/* Bulk memory dump — read N regions in one round-trip */
+#define CMD_PROC_BULK_READ  0xBDAA0025u
+#define CMD_KERN_BULK_READ  0xBDCC0004u
+#define CMD_BULK_MAX_REGIONS 64u    /* max regions per bulk request */
+#define CMD_BULK_REGION_SIZE  0x14  /* sizeof(struct bulk_region_entry) on wire: 4+2+2+8+4=20 */
+
+/* Bulk-read region descriptor (on wire, packed) */
+struct bulk_region_entry {
+    uint32_t pid;       /* process ID (ignored for kernel bulk read) */
+    uint16_t status;    /* 0=OK, 1=failed — filled by server in response preamble */
+    uint16_t _pad;
+    uint64_t address;   /* virtual address to read */
+    uint32_t length;    /* number of bytes to read */
+} __attribute__((packed));
+
+struct cmd_bulk_read_header {
+    uint16_t num_regions;   /* caller: count of regions; server: actual count processed */
+    uint16_t _pad;
+} __attribute__((packed));
+
 #define VALID_CMD(cmd)          (((cmd) >> 24) == 0xBDu)
 #define VALID_PROC_CMD(cmd)     ((((cmd) >> 16) & 0xFFu) == 0xAAu)
 #define VALID_DEBUG_CMD(cmd)    ((((cmd) >> 16) & 0xFFu) == 0xBBu)

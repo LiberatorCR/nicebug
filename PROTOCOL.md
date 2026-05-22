@@ -372,6 +372,25 @@ clients enumerate) stays unchanged. Clients that need it should send the literal
   payload's command dispatcher serialises clients so this is fine for the
   current usage, but concurrent assembles would need an external mutex.
 
+#### `CMD_PROC_BULK_READ = 0xBDAA0025` (proc.c) — nicebug addition
+Read N process memory regions in a single round-trip. Ideal for bulk GPU/CPU
+dumps where opening/closing sockets per-region is impractical.
+- **Request body:** `struct cmd_bulk_read_header` (4 bytes: `uint16_t num_regions; uint16_t _pad;`)
+  followed by `num_regions × struct bulk_region_entry` (20 bytes each):
+  `{uint32_t pid; uint16_t status; uint16_t _pad; uint64_t address; uint32_t length;}`
+- **Response stream:**
+  1. `CMD_SUCCESS` (bit-swapped status word)
+  2. `uint16_t num_regions, uint16_t _pad` (echoed header)
+  3. For each region in request order:
+     - `length` bytes of raw process memory (status=0)
+     - `struct bulk_region_entry` (20 bytes) with `.status` set to 0 on success, 1 on failure
+- **Per-region cap:** capped at `SERVER_CMD_MAX_TOTAL` (16 MiB).
+- **Max regions:** `CMD_BULK_MAX_REGIONS = 64` per request.
+
+#### `CMD_KERN_BULK_READ = 0xBDCC0004` (kern.c) — nicebug addition
+Same wire format as `CMD_PROC_BULK_READ` but for kernel memory. `pid` field in
+each region descriptor is ignored. Reads use `kernel_copyout_fast`.
+
 #### `CMD_PROC_SCAN_AOB = 0xBDAA0501` (proc.c:1582-1691) - **requires auth bit 1**
 - **Request body:** `struct cmd_proc_scan_aob_packet` (22 bytes):
   `{pid, address, length, max_matches(u8), stop_flag(u8), pattern_length(u32)}`.
@@ -636,6 +655,7 @@ debugger. After that the installer thread exits and the debugger services TCP.
 | `0xBDAA0022` | `CMD_PROC_FIND_XREFS_TO`         | `proc_find_xrefs_to_handle`     |       |
 | `0xBDAA0023` | `CMD_PROC_READ_STACK`            | `proc_read_stack_handle`        |       |
 | `0xBDAA0024` | _(raw literal, no macro)_        | `proc_assemble_handle`          |       |
+| `0xBDAA0025` | `CMD_PROC_BULK_READ`             | `proc_bulk_read_handle`         |       |
 | `0xBDAA0501` | `CMD_PROC_SCAN_AOB`              | `proc_scan_aob_handle`          | bit 1 |
 | `0xBDAA0502` | `CMD_PROC_SCAN_AOB_MULTI`        | `proc_scan_aob_multi_handle`    | bit 1 |
 | `0xBDAACCFF` | `CMD_PROC_AUTH`                  | `proc_auth_handle`              |       |
@@ -664,6 +684,7 @@ debugger. After that the installer thread exits and the debugger services TCP.
 | `0xBDCC0001` | `CMD_KERN_BASE`                  | `kern_base_handle`              |       |
 | `0xBDCC0002` | `CMD_KERN_READ`                  | `kern_read_handle`              |       |
 | `0xBDCC0003` | `CMD_KERN_WRITE`                 | `kern_write_handle`             |       |
+| `0xBDCC0004` | `CMD_KERN_BULK_READ`             | `kern_bulk_read_handle`         |       |
 | `0xBDDD0001` | `CMD_CONSOLE_REBOOT`             | `console_reboot_handle`         |       |
 | `0xBDDD0002` | `CMD_CONSOLE_END`                | inline (debug.c:133)            |       |
 | `0xBDDD0003` | `CMD_CONSOLE_PRINT`              | `console_print_handle`          |       |

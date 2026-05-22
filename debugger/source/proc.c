@@ -369,6 +369,11 @@ int proc_read_handle(int fd, struct cmd_packet *packet) {
         return 1;
     }
 
+    /* Guard against oversized reads — cap at server max */
+    if (rp->length > SERVER_CMD_MAX_TOTAL) {
+        rp->length = SERVER_CMD_MAX_TOTAL;
+    }
+
     void *data = net_alloc_buffer(0x10000);
     if (!data) {
         net_send_int32(fd, CMD_DATA_NULL);
@@ -844,6 +849,74 @@ int proc_alloc_hinted_handle(int fd, struct cmd_packet *packet) {
     return 0;
 }
 
+/* CMD_PROC_BULK_READ (0xBDAA0025u) — read N process regions in one round-trip.
+ *
+ * Wire format (request):
+ *   cmd_bulk_read_header { uint16_t num_regions; uint16_t _pad; }
+ *   bulk_region_entry { uint32_t pid; uint16_t status; uint16_t _pad;
+ *                       uint64_t address; uint32_t length; } x N
+ *
+ * Server response stream:
+ *   CMD_SUCCESS
+ *   uint16_t num_regions, uint16_t _pad  (echoed header)
+ *   Then for each region:
+ *     Raw data bytes (length bytes) if status==0
+ *     bulk_region_entry (20 bytes, server fills .status=0 on success, .status=1 on failure)
+ */
+#ifndef SERVER_CMD_MAX_TOTAL
+#define SERVER_CMD_MAX_TOTAL 0x1000000 /* 16 MiB */
+#endif
+
+int proc_bulk_read_handle(int fd, struct cmd_packet *packet) {
+    struct cmd_bulk_read_header *hdr = (struct cmd_bulk_read_header *)packet->data;
+    if (!hdr || hdr->num_regions == 0 || hdr->num_regions > CMD_BULK_MAX_REGIONS) {
+        net_send_int32(fd, CMD_DATA_NULL);
+        return 1;
+    }
+
+    uint16_t num = hdr->num_regions;
+
+    /* Region descriptors follow immediately after the header */
+    struct bulk_region_entry *regions =
+        (struct bulk_region_entry *)((uint8_t *)hdr + sizeof(struct cmd_bulk_read_header));
+
+    void *scratch = net_alloc_buffer(0x10000);
+    if (!scratch) {
+        net_send_int32(fd, CMD_DATA_NULL);
+        return 1;
+    }
+
+    net_send_int32(fd, CMD_SUCCESS);
+    net_send_all(fd, &num, 2);
+    uint16_t zp = 0;
+    net_send_all(fd, &zp, 2);
+
+    for (uint16_t i = 0; i < num; i++) {
+        uint32_t pid  = regions[i].pid;
+        uint64_t addr = regions[i].address;
+        uint32_t len  = regions[i].length;
+
+        if (len > SERVER_CMD_MAX_TOTAL) len = SERVER_CMD_MAX_TOTAL;
+
+        /* Read and send data */
+        uint32_t sent = 0;
+        while (sent < len) {
+            uint32_t chunk = (len - sent > 0x10000) ? 0x10000 : (len - sent);
+            memset(scratch, 0, chunk);
+            sys_proc_rw_w0((uint64_t)pid, addr + sent, chunk, scratch, 0);
+            net_send_all(fd, scratch, (int)chunk);
+            sent += chunk;
+        }
+
+        /* Echo descriptor (status=0 means success, set to 1 on failure) */
+        regions[i].status = (len == 0) ? 1 : 0;
+        net_send_all(fd, &regions[i].pid, sizeof(struct bulk_region_entry));
+    }
+
+    free(scratch);
+    return 0;
+}
+
 int proc_handle(int fd, struct cmd_packet *packet, unsigned char client_idx) {
     (void)client_idx;
     uint32_t cmd = packet->cmd;
@@ -869,6 +942,7 @@ int proc_handle(int fd, struct cmd_packet *packet, unsigned char client_idx) {
     case 0xBDAA0020u: return proc_disasm_region_handle(fd, packet);
     case 0xBDAA0021u: return proc_extract_code_xrefs_handle(fd, packet);
     case 0xBDAA0022u: return proc_find_xrefs_to_handle(fd, packet);
+    case 0xBDAA0025u: return proc_bulk_read_handle(fd, packet);  /* NEW */
     case 0xBDAA0501u: return proc_scan_aob_handle(fd, packet);
     case 0xBDAA0502u: return proc_scan_aob_multi_handle(fd, packet);
     case 0xBDAACCFFu: return proc_auth_handle(fd, packet);

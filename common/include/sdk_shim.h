@@ -72,15 +72,16 @@ extern int  scePthreadMutexTimedlock(void **mtx, unsigned int usec);
 extern int  scePthreadMutexUnlock(void **mtx);
 
 extern unsigned int sceKernelSleep(unsigned int sec);
-extern int  sceKernelUsleep(unsigned int usec);
-extern int  sceKernelReboot(void);
-extern int  sceKernelLoadStartModule(const char *path, size_t argc, void *argv,
-                                      unsigned int flags, void *opt, int *res);
-extern int  sceKernelGetModuleList(void *out, size_t max, size_t *count);
-extern int  sceKernelGetModuleListInternal(void *out, size_t max, size_t *count);
-extern int  sceKernelGetModuleInfo(int handle, void *info);
-extern int  sceKernelSendNotificationRequest(int unused, void *req, size_t reqsz, int flag);
-extern int  sceKernelDebugOutText(int fd, const char *msg);
+extern int          sceKernelUsleep(unsigned int usec);
+extern uint64_t     sceKernelGetProcessTime(void);
+extern int          sceKernelReboot(void);
+extern int          sceKernelLoadStartModule(const char *path, size_t argc, void *argv,
+                                              unsigned int flags, void *opt, int *res);
+extern int          sceKernelGetModuleList(void *out, size_t max, size_t *count);
+extern int          sceKernelGetModuleListInternal(void *out, size_t max, size_t *count);
+extern int          sceKernelGetModuleInfo(int handle, void *info);
+extern int          sceKernelSendNotificationRequest(int unused, void *req, size_t reqsz, int flag);
+extern int          sceKernelDebugOutText(int fd, const char *msg);
 
 extern int  sceApplicationContinue(int app_id);
 extern int  _sceApplicationGetAppId(int pid, int *app_id_out);
