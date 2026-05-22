@@ -25,6 +25,8 @@
 #include <sys/syscall.h>
 #include <sys/ptrace.h>
 
+extern int  sceNetInit(int pool_size, int heap_size, int flags);
+extern int  sceNetCtlInit(void);
 extern int  sceNetSocket(const char *name, int family, int type, int protocol);
 extern int  sceNetSocketClose(int fd);
 extern int  sceNetSocketAbort(int fd, int how);

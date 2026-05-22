@@ -45,8 +45,7 @@ extern void    *g_proc_rw_mutex;
 
 #define SERVER_PORT          744
 #define SERVER_MAXCLIENTS    12
-#define SERVER_IDLE_TIMEOUT  5000    /* ms — kill client after N ms of silence */
-#define SERVER_CMD_INTERVAL  500000  /* us — min time between commands (prevent rapid-fire) */
+#define SERVER_IDLE_TIMEOUT  120000  /* ms — kill client after 2 minutes of silence */
 #define SERVER_CMD_MAX_TOTAL 0x1000000 /* 16 MiB max read per single command */
 extern struct server_client g_clients[SERVER_MAXCLIENTS];
 
@@ -73,10 +72,7 @@ static int handle_client(struct server_client *svc) {
     fd_set sfd;
 
     /* idle timeout tracking — kill client after SERVER_IDLE_TIMEOUT ms of silence */
-    uint64_t last_activity = sceKernelGetProcessTime();
-
-    /* rate limiting — enforce minimum gap between commands */
-    uint64_t last_cmd_time = 0;
+    uint64_t last_activity = 0;
 
     while (1) {
         tv.tv_sec  = 0;
@@ -87,19 +83,10 @@ static int handle_client(struct server_client *svc) {
         select(fd + 1, &sfd, NULL, NULL, &tv);
 
         if (FD_ISSET(fd, &sfd)) {
-            /* rate-limit check: enforce cooldown between commands */
-            uint64_t now = sceKernelGetProcessTime();
-            if (last_cmd_time != 0) {
-                uint64_t elapsed = (uint64_t)(int64_t)((int64_t)now - (int64_t)last_cmd_time);
-                if (elapsed < SERVER_CMD_INTERVAL) {
-                    uint64_t sleep_us = SERVER_CMD_INTERVAL - elapsed;
-                    /* convert us to ms for sceKernelUsleep, min 1 ms */
-                    uint64_t sleep_ms = sleep_us / 1000;
-                    if (sleep_ms == 0) sleep_ms = 1;
-                    sceKernelUsleep(sleep_ms * 1000);
-                }
+            /* Initialize last_activity on first packet */
+            if (last_activity == 0) {
+                last_activity = sceKernelGetProcessTime();
             }
-            last_cmd_time = sceKernelGetProcessTime();
 
             struct cmd_packet packet;
             memset(&packet, 0, 12);
@@ -161,11 +148,13 @@ static int handle_client(struct server_client *svc) {
         }
         if (errno == ECONNRESET) return 0;
 
-        /* idle timeout check: if too long without any packet, disconnect */
-        uint64_t now = sceKernelGetProcessTime();
-        uint64_t idle_ms = (uint64_t)(int64_t)((int64_t)now - (int64_t)last_activity);
-        if (idle_ms > SERVER_IDLE_TIMEOUT && !svc->debugging) {
-            return 0; /* disconnect idle client */
+        /* idle timeout check: only after we've seen at least one packet */
+        if (last_activity != 0) {
+            uint64_t now = sceKernelGetProcessTime();
+            uint64_t idle_ms = (uint64_t)(int64_t)((int64_t)now - (int64_t)last_activity);
+            if (idle_ms > SERVER_IDLE_TIMEOUT && !svc->debugging) {
+                return 0; /* disconnect idle client */
+            }
         }
 
         sceKernelUsleep(svc->debugging ? 250 : 10000);
@@ -237,6 +226,9 @@ static void *broadcast_thread(void *arg) {
 
 static int start_server(void) {
 
+    /* Explicitly initialize the network stack (required when running as a payload) */
+    sceNetInit(1024 * 1024, 0, 0);
+
     {
         ScePthread bcast_tid;
         if (scePthreadCreate(&bcast_tid, NULL, broadcast_thread,
@@ -248,6 +240,7 @@ static int start_server(void) {
     int srv = sceNetSocket((const char *)0, 2 , 1 , 0);
     if (srv < 0) {
         notify("ps5debug: sceNetSocket() failed");
+        sceKernelSleep(60); /* Prevent notif spam brick */
         return 1;
     }
 

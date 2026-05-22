@@ -10,6 +10,9 @@
 #define SERVER_CMD_MAX_TOTAL 0x1000000 /* 16 MiB max per command */
 #endif
 
+/* Forward declaration of bulk read handler */
+int kern_bulk_read_handle(int fd, struct cmd_packet *packet);
+
 int kern_base_handle(int fd, struct cmd_packet *packet) {
     (void)packet;
     uint64_t kbase = KERNEL_ADDRESS_DATA_BASE;

@@ -362,6 +362,10 @@ int proc_list_handle(int fd, struct cmd_packet *packet) {
     return 0;
 }
 
+#ifndef SERVER_CMD_MAX_TOTAL
+#define SERVER_CMD_MAX_TOTAL 0x1000000 /* 16 MiB max per command */
+#endif
+
 int proc_read_handle(int fd, struct cmd_packet *packet) {
     struct cmd_proc_read_packet *rp = (struct cmd_proc_read_packet *)packet->data;
     if (!rp) {
