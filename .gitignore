@@ -27,3 +27,4 @@ Thumbs.db
 _notinclude/
 debugger/build.bat
 debugger/build2.bat
+installer/build.bat
