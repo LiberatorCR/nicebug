@@ -29,7 +29,7 @@ static int priv_syscall_573(uint64_t *cmd, uint64_t *args, uint64_t *out)
     return (restore_rc != 0 ? -1 : 0) | (int)syscall_rc;
 }
 
-static int sys_proc_rw_inner(uint32_t pid, uint64_t address, void *data,
+int sys_proc_rw_inner(uint32_t pid, uint64_t address, void *data,
                               uint64_t length, uint64_t *arg5_out, int write)
 {
     uint64_t cmd_struct[2]  = { 1, write ? 0x13ull : 0x12ull };

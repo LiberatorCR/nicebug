@@ -941,7 +941,8 @@ int proc_handle(int fd, struct cmd_packet *packet, unsigned char client_idx) {
     case 0xBDAA000Bu: return proc_alloc_handle(fd, packet);
     case 0xBDAA000Cu: return proc_free_handle(fd, packet);
     case 0xBDAA000Du: return proc_unknown_d_handle(fd, packet);
-    case 0xBDAA000Eu: return proc_alloc_hinted_handle(fd, packet);
+case 0xBDAA000Eu: return proc_alloc_hinted_handle(fd, packet);
+case 0xBDAA000Fu: return proc_ping_handle(fd, packet);   /* PID existence check via syscall 573 */
     case 0xBDAA0010u: return proc_elf_rpc_handle(fd, packet);
     case 0xBDAA0020u: return proc_disasm_region_handle(fd, packet);
     case 0xBDAA0021u: return proc_extract_code_xrefs_handle(fd, packet);
@@ -952,9 +953,50 @@ int proc_handle(int fd, struct cmd_packet *packet, unsigned char client_idx) {
     case 0xBDAACCFFu: return proc_auth_handle(fd, packet);
     case 0xBDAACC01u: return proc_scan_start_handle(fd, packet);
     case 0xBDAACC02u: return proc_scan_count_handle(fd, packet);
-    case 0xBDAACC03u: return proc_scan_get_handle(fd, packet);
+case 0xBDAACC03u: return proc_scan_get_handle(fd, packet);
     }
 
     net_send_int32(fd, CMD_ERROR);
+    return 0;
+}
+
+/* ── proc_ping_handle: check if a PID exists via syscall 573 ──────────── */
+/* Uses the kernel's PID hash table (pfind) rather than walking allproc.
+ * This finds game processes that are invisible to allproc-based lookup. */
+
+struct cmd_proc_ping_response {
+    uint32_t pid;
+    int32_t  exists;   /* 1 if process exists, 0 otherwise */
+} __attribute__((packed));
+
+int proc_ping_handle(int fd, struct cmd_packet *packet) {
+    if (!packet->data || packet->datalen < 4) {
+        net_send_int32(fd, CMD_DATA_NULL);
+        return 1;
+    }
+    uint32_t pid = *(uint32_t *)packet->data;
+
+    struct cmd_proc_ping_response resp;
+    memset(&resp, 0, sizeof(resp));
+    resp.pid   = pid;
+    resp.exists = 0;
+
+    /* Fast path: allproc-based lookup */
+    intptr_t kproc = kernel_get_proc_fast((pid_t)pid);
+    if (kproc != 0) {
+        resp.exists = 1;
+        net_send_int32(fd, CMD_SUCCESS);
+        net_send_all(fd, &resp, sizeof(resp));
+        return 0;
+    }
+
+    /* Fallback: syscall 573 (kernel's PID hash table lookup).
+     * Read 8 bytes from libkernel at 0x800000000 — always mapped in every process. */
+    uint8_t probe[8] = {0};
+    int rc = sys_proc_rw_inner(pid, 0x800000000, &probe, 8, NULL, 0);
+    resp.exists = (rc == 0) ? 1 : 0;
+
+    net_send_int32(fd, CMD_SUCCESS);
+    net_send_all(fd, &resp, sizeof(resp));
     return 0;
 }

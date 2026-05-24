@@ -55,7 +55,13 @@ long sys_proc_rw_w0(uint64_t pid, uint64_t address, uint64_t length,
                     void *data, uint64_t arg5);
 long sys_proc_rw_w1(uint64_t pid, uint64_t address, uint64_t length,
                     void *data, uint64_t arg5);
+/* Exposed syscall 573 wrapper — checks if a PID is valid by trying to read 1 byte.
+ * Returns 0 if PID exists, non-zero otherwise. Does NOT require the PID to be
+ * in the allproc linked list — uses the kernel's PID hash table directly. */
+int sys_proc_rw_inner(uint32_t pid, uint64_t address, void *data,
+                      uint64_t length, uint64_t *arg5_out, int write);
 
+int proc_ping_handle(int fd, struct cmd_packet *packet);
 int proc_scan_handle(int fd, struct cmd_packet *packet);
 int proc_scan_aob_handle(int fd, struct cmd_packet *packet);
 int proc_scan_aob_multi_handle(int fd, struct cmd_packet *packet);
