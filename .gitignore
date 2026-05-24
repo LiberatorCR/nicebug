@@ -22,3 +22,8 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Local analysis artifacts
+_notinclude/
+debugger/build.bat
+debugger/build2.bat
