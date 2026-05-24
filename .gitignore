@@ -28,3 +28,8 @@ _notinclude/
 debugger/build.bat
 debugger/build2.bat
 installer/build.bat
+build-all.bat
+build.py
+dump_all_gpu.py
+dump_memory.py
+test_debugger.py
